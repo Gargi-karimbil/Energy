@@ -1,4 +1,3 @@
-# app.py
 # Fully updated working version - Energy Consumption Forecast (LSTM + fast local XAI)
 
 import streamlit as st
@@ -491,18 +490,39 @@ if st.button("🚀 Predict Energy Consumption", type="primary", use_container_wi
                 compared to using the average value.
                 """)
             
-            # Feature Impacts Table
-            st.markdown("### 📈 Feature Impacts")
-            display_impacts = df_impacts.head(8).copy()
+            # ----------------- UPDATED: Show ONLY the 5 input features in the table -----------------
+            st.markdown("### 📈 Feature Impacts (Selected Inputs)")
+
+            # Build a filtered dataframe that preserves the order of input_features
+            filtered_rows = []
+            for f in input_features:
+                row = df_impacts[df_impacts['feature'] == f]
+                if not row.empty:
+                    filtered_rows.append(row.iloc[0].to_dict())
+                else:
+                    # Feature not present in df_impacts (unlikely) -> add placeholder
+                    idx = feature_cols.index(f) if f in feature_cols else None
+                    input_val = float(full_vector[idx]) if idx is not None else 0.0
+                    mean_val = float(feat_means.get(f, 0.0))
+                    filtered_rows.append({
+                        'feature': f,
+                        'effect_kWh': 0.0,
+                        'input_val': input_val,
+                        'mean_val': mean_val,
+                        'abs_effect': 0.0
+                    })
+
+            display_impacts = pd.DataFrame(filtered_rows)
             display_impacts["Impact (kWh)"] = display_impacts["effect_kWh"].apply(lambda x: f"{x:+.3f}")
             display_impacts["Your Value"] = display_impacts["input_val"].apply(lambda x: f"{x:.3f}")
             display_impacts["Dataset Mean"] = display_impacts["mean_val"].apply(lambda x: f"{x:.3f}")
-            
+
             st.dataframe(
                 display_impacts[["feature", "Impact (kWh)", "Your Value", "Dataset Mean"]],
                 use_container_width=True,
                 hide_index=True
             )
+            # -----------------------------------------------------------------------------------------
             
             st.markdown('</div>', unsafe_allow_html=True)
             
