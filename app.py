@@ -1,5 +1,5 @@
+# app.py (updated)
 # Fully updated working version - Energy Consumption Forecast (LSTM + fast local XAI)
-
 import streamlit as st
 import os, time, pickle
 import numpy as np
@@ -133,7 +133,6 @@ def load_energy_model(model_path):
     # Strategy 4: Try different file formats
     try:
         st.sidebar.info("🔄 Attempting Keras format load...")
-        # If it's actually a .keras format but named .h5
         model = tf.keras.models.load_model(model_path)
         st.sidebar.success("✅ Model loaded as Keras format")
         return model, "Keras format load"
@@ -296,45 +295,88 @@ for f in feature_cols:
 
 # ---------- Main Input Interface ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("🔧 Input Features")
+st.subheader(" Input Features")
 
 # Create two columns for better layout
 col1, col2 = st.columns(2)
 inputs = {}
 
 for i, fname in enumerate(input_features):
-    with col1 if i % 2 == 0 else col2:
-        # Set reasonable bounds and step based on feature type
-        if "num" in fname.lower() or fname == "NSM":
-            # Integer features
-            min_val = int(feat_mins.get(fname, 0))
-            max_val = int(feat_maxs.get(fname, 100))
-            default_val = int(round(feat_means.get(fname, 0)))
-            step = 1
-            value = st.number_input(
-                label=f"**{fname}**",
-                value=default_val,
-                min_value=min_val,
-                max_value=max_val,
-                step=step,
-                help=f"Range: {min_val} - {max_val}"
+    # SPECIAL HANDLING for WeekStatus_num, Load_Type_num and NSM
+    with (col1 if i % 2 == 0 else col2):
+        if fname == "WeekStatus_num":
+            # Show a radio for Weekday / Weekend
+            default_ws = int(round(feat_means.get(fname, 1)))
+            ws_val = st.radio(
+                label="**WeekStatus (Weekday=1 / Weekend=0)**",
+                options=[1, 0],
+                index=0 if default_ws == 1 else 1,
+                help="Select 1 for Weekday and 0 for Weekend"
             )
+            inputs[fname] = int(ws_val)
+
+        elif fname == "Load_Type_num":
+            # Show a selectbox for categorical load type: 1,2,3
+            # Try to determine default category from mean if it's very near an integer
+            mean_val = feat_means.get(fname, 1.0)
+            default_choice = int(round(mean_val)) if mean_val >= 1 else 1
+            default_choice = min(max(default_choice, 1), 3)
+            choice = st.selectbox(
+                label="**Load_Type (1=Light, 2=Medium, 3=Heavy)**",
+                options=[1, 2, 3],
+                index=[1,2,3].index(default_choice),
+                help="Select the load type category"
+            )
+            inputs[fname] = int(choice)
+
+        elif fname == "NSM":
+            # NSM should be Number of Seconds from Midnight (0 to 86400)
+            # Use dataset min/max as suggestion but provide full range if those are too narrow
+            min_suggest = int(min(max(0, feat_mins.get("NSM", 0)), 86400))
+            max_suggest = int(min(max(1, feat_maxs.get("NSM", 86400)), 86400))
+            # if suggested range is too narrow, default to full day range
+            if max_suggest <= min_suggest:
+                min_suggest, max_suggest = 0, 86400
+            default_val = int(round(feat_means.get("NSM", 3600)))
+            default_val = min(max(default_val, min_suggest), max_suggest)
+            nsm_val = st.number_input(
+                label="**NSM (Seconds from Midnight)**",
+                value=default_val,
+                min_value=min_suggest,
+                max_value=max_suggest,
+                step=1,
+                help=f"Enter seconds from midnight (0 - 86400). Suggested range: {min_suggest}-{max_suggest}"
+            )
+            inputs[fname] = int(nsm_val)
+
         else:
-            # Continuous features
-            min_val = float(feat_mins.get(fname, 0))
-            max_val = float(feat_maxs.get(fname, 10))
-            default_val = float(round(feat_means.get(fname, 0), 2))
-            step = 0.1
-            value = st.number_input(
-                label=f"**{fname}**", 
-                value=default_val,
-                min_value=min_val,
-                max_value=max_val,
-                step=step,
-                format="%.2f",
-                help=f"Range: {min_val:.2f} - {max_val:.2f}"
-            )
-        inputs[fname] = float(value)
+            # Default numeric entry (continuous)
+            # Determine if column is integer-like by checking if min/max are integers
+            min_val = feat_mins.get(fname, 0.0)
+            max_val = feat_maxs.get(fname, 10.0)
+            mean_val = feat_means.get(fname, 0.0)
+            # If range suggests integer domain, use int step
+            if float(min_val).is_integer() and float(max_val).is_integer() and (max_val - min_val) > 10:
+                value = st.number_input(
+                    label=f"**{fname}**",
+                    value=int(round(mean_val)),
+                    min_value=int(min_val),
+                    max_value=int(max_val),
+                    step=1,
+                    help=f"Range: {min_val} - {max_val}"
+                )
+                inputs[fname] = float(value)
+            else:
+                value = st.number_input(
+                    label=f"**{fname}**",
+                    value=float(round(mean_val, 3)),
+                    min_value=float(min_val),
+                    max_value=float(max_val),
+                    step=0.1,
+                    format="%.3f",
+                    help=f"Range: {min_val:.3f} - {max_val:.3f}"
+                )
+                inputs[fname] = float(value)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -345,7 +387,8 @@ def make_prediction(feature_inputs):
     full_vector = np.zeros(F_model, dtype=float)
     for i, col in enumerate(feature_cols):
         if col in feature_inputs:
-            full_vector[i] = feature_inputs[col]
+            # ensure we convert any 'WeekStatus_num' or 'Load_Type_num' to numeric
+            full_vector[i] = float(feature_inputs[col])
         else:
             full_vector[i] = feat_means.get(col, 0.0)
     
@@ -437,7 +480,7 @@ def compute_feature_impacts(base_prediction, input_3d, full_vector):
     return df_impacts
 
 # ---------- Prediction Trigger ----------
-if st.button("🚀 Predict Energy Consumption", type="primary", use_container_width=True):
+if st.button(" Predict Energy Consumption", type="primary", use_container_width=True):
     with st.spinner("Making prediction and analyzing feature impacts..."):
         try:
             start_time = time.time()
